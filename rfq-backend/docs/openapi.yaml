@@ -1,0 +1,514 @@
+openapi: 3.0.3
+info:
+  title: RFQ Marketplace Backend API
+  version: 1.0.0
+  description: |
+    Yii2 REST API for RFQ Marketplace (users + companies) with JWT auth and websocket notifications.
+
+servers:
+  # Use relative server URL so Swagger UI works whether you open /docs via
+  # http://localhost:8000 or http://127.0.0.1:8000 (avoids CORS "Failed to fetch").
+  - url: /
+
+tags:
+  - name: Auth
+  - name: Categories
+  - name: Subscriptions
+  - name: Requests
+  - name: Quotations
+  - name: Offers
+  - name: Notifications
+  - name: WebSocket
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AuthUser:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        username: { type: string }
+        role: { type: string, enum: [user, company] }
+        company_name: { type: string, nullable: true }
+        rating: { type: number }
+        email_verified: { type: boolean }
+    AuthTokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        expires_in: { type: integer }
+        refresh_token: { type: string }
+        refresh_expires_in: { type: integer }
+        requires_verification: { type: boolean, description: Present on register when email verification is required }
+        user:
+          $ref: '#/components/schemas/AuthUser'
+    Error:
+      type: object
+      properties:
+        name: { type: string }
+        message: { type: string }
+        code: { type: integer }
+        status: { type: integer }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register user or company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, username, password, role]
+              properties:
+                email: { type: string }
+                username: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [user, company] }
+                company_name: { type: string }
+                phone: { type: string, description: Required for company accounts }
+      responses:
+        '200':
+          description: OK
+
+  /api/dev-notifications/broadcast-all:
+    post:
+      tags: [WebSocket]
+      security: []
+      summary: (DEV ONLY) Public websocket broadcast to all users (no auth)
+      description: |
+        Dev-only helper. No Bearer token required. Works only when `YII_ENV_DEV=true`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string, example: test_broadcast }
+                title: { type: string, example: Test notification }
+                message: { type: string, example: Hello from websocket }
+                payload:
+                  type: object
+                  additionalProperties: true
+                  example: { title: Test notification, message: Hello from websocket }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  sent: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokens' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login (username or email)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokens' }
+        '403':
+          description: |
+            Account not verified. Backend auto-sends OTP on login attempt (throttled 1 minute).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  requires_verification: { type: boolean }
+                  otp_code: { type: string, description: Fixed for assessment, always 123456 }
+                  retry_in: { type: integer, nullable: true, description: Seconds to wait before requesting a new OTP }
+
+  /api/auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Refresh access token (rotation)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokens' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke refresh token or all)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+                all: { type: boolean }
+      responses:
+        '200':
+          description: OK
+
+  /api/auth/otp/send:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Send OTP (fixed code 123456) for verify or reset
+      description: |
+        Throttled: **1 minute** between sends per (email,purpose).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string }
+                purpose: { type: string, enum: [verify, reset] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  otp_code: { type: string, description: Fixed for assessment, always 123456 }
+
+  /api/auth/otp/verify:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Verify OTP (fixed code 123456)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose, code]
+              properties:
+                email: { type: string }
+                purpose: { type: string, enum: [verify, reset] }
+                code: { type: string, example: '123456' }
+      responses:
+        '200':
+          description: |
+            For `purpose=verify`, returns tokens like login (so the client can continue immediately).
+            For `purpose=reset`, returns `{ ok: true }`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AuthTokens'
+                  - type: object
+                    properties:
+                      ok: { type: boolean }
+
+  /api/auth/password/reset:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Reset password using OTP (purpose reset)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, new_password]
+              properties:
+                email: { type: string }
+                code: { type: string, example: '123456' }
+                new_password: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+
+  /api/ws/token:
+    get:
+      tags: [WebSocket]
+      summary: Get Centrifugo connection token
+      responses:
+        '200':
+          description: OK
+
+  /api/categories:
+    get:
+      tags: [Categories]
+      security: []
+      summary: List categories
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Categories]
+      summary: Create category (restricted)
+      responses:
+        '200': { description: OK }
+
+  /api/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List my subscriptions
+      responses:
+        '200': { description: OK }
+
+  /api/subscriptions/toggle:
+    post:
+      tags: [Subscriptions]
+      summary: Toggle subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id]
+              properties:
+                category_id: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/requests:
+    post:
+      tags: [Requests]
+      summary: Create request (user)
+      responses:
+        '200': { description: OK }
+    patch:
+      tags: [Requests]
+      summary: Update request (user)
+      responses:
+        '405': { description: Not allowed }
+
+  /api/requests/my:
+    get:
+      tags: [Requests]
+      summary: List my ACTIVE requests (open + not expired)
+      responses:
+        '200': { description: OK }
+
+  /api/requests/history:
+    get:
+      tags: [Requests]
+      summary: Requests history (user: closed/awarded/cancelled/expired, company: requests where my quotation is decided)
+      responses:
+        '200': { description: OK }
+
+  # Status codes
+  # - Requests.status: open|closed|awarded|cancelled
+  # - Offers.status: active|inactive
+  # - Quotations.status: created|accepted|rejected_by_user|cancelled_by_company
+
+  /api/requests/available:
+    get:
+      tags: [Requests]
+      summary: List available requests (company)
+      parameters:
+        - in: query
+          name: category_id
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/requests/{id}/cancel:
+    post:
+      tags: [Requests]
+      summary: Cancel request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/requests/{id}/close:
+    post:
+      tags: [Requests]
+      summary: Close request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/quotations:
+    get:
+      tags: [Quotations]
+      summary: List my quotations (company) / quotations for my requests (user)
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Quotations]
+      summary: Submit quotation (company)
+      responses:
+        '200': { description: OK }
+
+  /api/quotations/by-request/{requestId}:
+    get:
+      tags: [Quotations]
+      summary: Quotations for request (user), sorted by best offer
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/quotations/{id}:
+    get:
+      tags: [Quotations]
+      summary: Quotation details (includes company contact after acceptance)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/quotations/{id}/accept:
+    post:
+      tags: [Quotations]
+      summary: Accept quotation (user)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/quotations/{id}/reject:
+    post:
+      tags: [Quotations]
+      summary: Reject quotation (user)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/quotations/{id}/withdraw:
+    post:
+      tags: [Quotations]
+      summary: Withdraw quotation (company)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/offers:
+    post:
+      tags: [Offers]
+      summary: Create offer (company)
+      responses:
+        '200': { description: OK }
+
+  /api/offers/my:
+    get:
+      tags: [Offers]
+      summary: List my offers (company)
+      responses:
+        '200': { description: OK }
+
+  /api/offers/available:
+    get:
+      tags: [Offers]
+      summary: List available offers (user)
+      parameters:
+        - in: query
+          name: category_id
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/offers/{id}/deactivate:
+    post:
+      tags: [Offers]
+      summary: Deactivate offer (company)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      responses:
+        '200': { description: OK }
+
+  /api/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark notification read
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: OK }
+

@@ -1,0 +1,27 @@
+{
+  "http_server": {
+    "port": 8001
+  },
+  "http_api": {
+    "key": "rfq_centrifugo_api_key_change_me"
+  },
+  "channel": {
+    "without_namespace": {
+      "allow_subscribe_for_client": true,
+      "channel_regex": "^(user\\.[0-9]+|category\\.[0-9]+)$"
+    }
+  },
+  "client": {
+    "allowed_origins": ["*"],
+    "token": {
+      "hmac_secret_key": "rfq_centrifugo_jwt_secret_change_me"
+    }
+  },
+  "admin": {
+    "enabled": true,
+    "password": "admin",
+    "secret": "admin_secret"
+  }
+}
+
+

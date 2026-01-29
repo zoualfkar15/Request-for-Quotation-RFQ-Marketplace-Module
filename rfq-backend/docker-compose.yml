@@ -1,0 +1,17 @@
+version: '2'
+services:
+  php:
+    image: yiisoftware/yii2-php:7.4-apache
+    volumes:
+      - ~/.composer-docker/cache:/root/.composer/cache:delegated
+      - ./:/app:delegated
+    ports:
+      - '8000:80'
+
+  centrifugo:
+    image: centrifugo/centrifugo:v6.6.0
+    command: centrifugo -c /centrifugo/config.json
+    volumes:
+      - ./centrifugo/config.json:/centrifugo/config.json:ro
+    ports:
+      - '8001:8001'
